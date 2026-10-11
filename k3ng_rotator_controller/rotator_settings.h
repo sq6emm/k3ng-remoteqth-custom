@@ -390,7 +390,8 @@ You can tweak these, but read the online documentation!
 #define SATELLITE_AOS_ELEVATION_MIN 0.0
 
 /* ---------------- SQ6EMM settings (2026-10) ---------------- */
-#define AZ_PULSE_DEBOUNCE_US 8000          // ignore edges closer than this to the previous accepted edge (reed contact bounce)
+#define AZ_PULSE_DEBOUNCE_US 2000          // ignore edges closer than this to the previous accepted edge (reed bounce is typically < 1 ms)
+#define AZ_PULSE_STABLE_US 300            // a new level must be stable this long (EMI spike / bounce filter, verified in simulation)
 #define AZ_PULSE_QUIET_MS 300              // never energize the motor in the opposite direction while pulses still arrive (coasting)
 #define AZ_PULSE_LIMIT_MARGIN 15.0         // keep counting this many degrees beyond start / start+capability (no lost pulses at the limits)
 #define AZ_SOFT_LIMIT_ANTICIPATION 5.0     // manual rotation: start the soft stop this many degrees before AZ_MANUAL_ROTATE_*_LIMIT

@@ -1124,6 +1124,7 @@ struct config_t {
   #ifdef OPTION_SQ6EMM_PULSE_FIXES
     volatile unsigned long az_pulse_last_edge_us = 0;   // time of the last accepted edge (debounce)
     volatile unsigned long az_pulse_last_edge_ms = 0;   // same in ms (coast detection, EEPROM save)
+    volatile byte az_pulse_last_level = 1;              // level after the last accepted edge (idle: pull-up, contact open)
     volatile unsigned long az_pulse_accepted = 0;       // \?PD diagnostics
     volatile unsigned long az_pulse_rejected = 0;
     volatile unsigned long az_pulse_coast = 0;
@@ -9496,6 +9497,7 @@ void initialize_interrupts(){
 
   #ifdef FEATURE_AZ_POSITION_PULSE_INPUT
   #ifdef OPTION_SQ6EMM_PULSE_BOTH_EDGES
+  az_pulse_last_level = ((AZ_POSITION_PULSE_PIN_INTERRUPT == 0) ? (PIND & _BV(PD2)) : (PIND & _BV(PD3))) ? 1 : 0;
   attachInterrupt(AZ_POSITION_PULSE_PIN_INTERRUPT, az_position_pulse_interrupt_handler, CHANGE);
   #else
   attachInterrupt(AZ_POSITION_PULSE_PIN_INTERRUPT, az_position_pulse_interrupt_handler, FALLING);
@@ -10867,7 +10869,21 @@ void service_request_queue(){
         #endif // FEATURE_PARK
         if (az_state != IDLE) {
           if (az_slowdown_active) {
-            #ifndef OPTION_SQ6EMM_ALWAYS_SOFT   // SQ6EMM: keep ramping down; immediate stops only via explicit STOP commands (REQUEST_KILL)
+            #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+            // SQ6EMM: never a hard stop here (immediate stops only via explicit STOP commands = REQUEST_KILL).
+            // Already crawling towards a target: finish with the timed ramp from the current PWM, then stop.
+            if (az_state == SLOW_DOWN_CW) {
+              az_state = INITIALIZE_TIMED_SLOW_DOWN_CW;
+              az_request_queue_state = IN_PROGRESS_TIMED;
+              az_last_rotate_initiation = millis();
+            }
+            if (az_state == SLOW_DOWN_CCW) {
+              az_state = INITIALIZE_TIMED_SLOW_DOWN_CCW;
+              az_request_queue_state = IN_PROGRESS_TIMED;
+              az_last_rotate_initiation = millis();
+            }
+            #endif
+            #ifndef OPTION_SQ6EMM_ALWAYS_SOFT
             if ((az_state == TIMED_SLOW_DOWN_CW) || (az_state == TIMED_SLOW_DOWN_CCW) || (az_state == SLOW_DOWN_CW) || (az_state == SLOW_DOWN_CCW)) {  // if we're already in timed slow down and we get another stop, do a hard stop
               rotator(DEACTIVATE, CW);
               rotator(DEACTIVATE, CCW);
@@ -11506,16 +11522,36 @@ void az_position_pulse_interrupt_handler(){
 
   // SQ6EMM: single-channel pulses from the SPID motor side (before the self-locking slew drive)
   unsigned long now_us = micros();
+  byte level_now = ((AZ_POSITION_PULSE_PIN_INTERRUPT == 0) ? (PIND & _BV(PD2)) : (PIND & _BV(PD3))) ? 1 : 0;
+  delayMicroseconds(AZ_PULSE_STABLE_US);   // the new level must still be there: rejects EMI spikes and mid-bounce reads
+  byte level_check = ((AZ_POSITION_PULSE_PIN_INTERRUPT == 0) ? (PIND & _BV(PD2)) : (PIND & _BV(PD3))) ? 1 : 0;
+  if (level_check != level_now) {
+    az_pulse_rejected++;
+    return;
+  }
   if ((now_us - az_pulse_last_edge_us) < (unsigned long)AZ_PULSE_DEBOUNCE_US) {   // reed contact bounce
     az_pulse_rejected++;
     return;
   }
+  #ifdef OPTION_SQ6EMM_PULSE_BOTH_EDGES
+    // count real level changes only: a bounce or a missed edge then corrects itself within half a step
+    // instead of shifting the scale (each closed+open pair always adds up to exactly one pulse)
+    if (level_now == az_pulse_last_level) {
+      az_pulse_rejected++;
+      return;
+    }
+  #else
+    if (level_now) {   // FALLING mode: a high line right after the interrupt is a glitch
+      az_pulse_rejected++;
+      return;
+    }
+  #endif
+  az_pulse_last_level = level_now;
   unsigned long dt_ms = (now_us - az_pulse_last_edge_us) / 1000UL;
   az_pulse_last_edge_us = now_us;
   az_pulse_last_edge_ms = millis();
 
   // duty-cycle statistics (meaningful with both edges): the interval that just ended had the opposite level
-  byte level_now = (AZ_POSITION_PULSE_PIN_INTERRUPT == 0) ? (PIND & _BV(PD2)) : (PIND & _BV(PD3));
   if (dt_ms < 5000) {
     if (level_now) {   // rising edge: contact was closed (line low)
       az_pulse_low_ms_sum += dt_ms; az_pulse_low_n++;
