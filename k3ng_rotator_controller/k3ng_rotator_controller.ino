@@ -14882,6 +14882,25 @@ byte process_backslash_command(byte input_buffer[], int input_buffer_index, byte
           dtostrf(raw_azimuth,0,6,temp_string);
           strcat(return_string,temp_string);
         }
+        #if defined(OPTION_SQ6EMM_PULSE_FIXES) && defined(FEATURE_AZ_POSITION_PULSE_INPUT)
+        if ((input_buffer[2] == 'P') && (input_buffer[3] == 'D')) {  // \?PD - SQ6EMM pulse diagnostics
+          // a<accepted edges> r<rejected/bounce> c<coasting> h<held starts> H<avg high ms>/<min high ms> L<avg low ms>/<min low ms>
+          unsigned long acc, rej, coast, hs, ls; unsigned int hn, ln, hmin, lmin;
+          { uint8_t sreg = SREG; cli(); acc = az_pulse_accepted; rej = az_pulse_rejected; coast = az_pulse_coast;
+            hs = az_pulse_high_ms_sum; ls = az_pulse_low_ms_sum; hn = az_pulse_high_n; ln = az_pulse_low_n;
+            hmin = az_pulse_high_ms_min; lmin = az_pulse_low_ms_min; SREG = sreg; }
+          strconditionalcpy(return_string, "\\!OKPD", include_response_code);
+          char t[12];   // no printf: keeps ~1.3 kB of flash free
+          strcat(return_string, "a"); strcat(return_string, ultoa(acc, t, 10));
+          strcat(return_string, " r"); strcat(return_string, ultoa(rej, t, 10));
+          strcat(return_string, " c"); strcat(return_string, ultoa(coast, t, 10));
+          strcat(return_string, " h"); strcat(return_string, ultoa(az_start_holds, t, 10));
+          strcat(return_string, " H"); strcat(return_string, ultoa(hn ? hs / hn : 0UL, t, 10));
+          strcat(return_string, "/"); strcat(return_string, utoa(hmin, t, 10));
+          strcat(return_string, " L"); strcat(return_string, ultoa(ln ? ls / ln : 0UL, t, 10));
+          strcat(return_string, "/"); strcat(return_string, utoa(lmin, t, 10));
+        }
+        #endif
         if ((input_buffer[2] == 'E') && (input_buffer[3] == 'L')) {  // \?EL - query EL
           #ifdef FEATURE_ELEVATION_CONTROL
             strconditionalcpy(return_string, "\\!OKFS", include_response_code);
@@ -16718,14 +16737,22 @@ void process_yaesu_command(byte * yaesu_command_buffer, int yaesu_command_buffer
         #else
         strcat(return_string,"AZ=");
         #endif
-        dtostrf(int(azimuth),0,0,tempstring);
-        if (int(azimuth) < 10) {
-          strcat(return_string,"0");
+        {
+          #ifdef OPTION_SQ6EMM_PULSE_FIXES
+          int az_report = int(azimuth + 0.5);    // round half-degree positions instead of truncating
+          if (az_report >= 360) {az_report -= 360;}
+          #else
+          int az_report = int(azimuth);
+          #endif
+          dtostrf(az_report,0,0,tempstring);
+          if (az_report < 10) {
+            strcat(return_string,"0");
+          }
+          if (az_report < 100) {
+            strcat(return_string,"0");
+          }
+          strcat(return_string,tempstring);
         }
-        if (int(azimuth) < 100) {
-          strcat(return_string,"0");
-        }
-        strcat(return_string,tempstring);
 
         #ifdef FEATURE_ELEVATION_CONTROL
         #ifndef OPTION_C_COMMAND_SENDS_AZ_AND_EL
