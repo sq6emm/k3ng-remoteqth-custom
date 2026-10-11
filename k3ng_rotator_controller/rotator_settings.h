@@ -100,7 +100,7 @@ You can tweak these, but read the online documentation!
 #define ENCODER_PRESET_TIMEOUT 5000
 
 // various code settings
-#define AZIMUTH_TOLERANCE 1.0            // rotator will stop within X degrees when doing autorotation
+#define AZIMUTH_TOLERANCE 0.5            // rotator will stop within X degrees when doing autorotation
 #define ELEVATION_TOLERANCE 0.1 //1.0
 #define OPERATION_TIMEOUT 120000        // timeout for any rotation operation in mS ; 120 seconds is usually enough unless you have the speed turned down
 #define TIMED_INTERVAL_ARRAY_SIZE 20
@@ -154,7 +154,11 @@ You can tweak these, but read the online documentation!
 #define AZ_POSITION_ROTARY_ENCODER_DEG_PER_PULSE 0.5
 #define EL_POSITION_ROTARY_ENCODER_DEG_PER_PULSE 0.5
 
-#define AZ_POSITION_PULSE_DEG_PER_PULSE 1.0
+#ifdef OPTION_SQ6EMM_PULSE_BOTH_EDGES
+  #define AZ_POSITION_PULSE_DEG_PER_PULSE 0.5   // SQ6EMM: per edge (SPID: 1 pulse = 1 deg = 2 edges)
+#else
+  #define AZ_POSITION_PULSE_DEG_PER_PULSE 1.0
+#endif
 #define EL_POSITION_PULSE_DEG_PER_PULSE 0.5
 
 #define PARK_AZIMUTH 360.0      // replace the 0.0 with your park azimuth; azimuth is in raw degrees (i.e. on a 180 degree starting point rotator, 0 degrees = 360)
@@ -384,3 +388,10 @@ You can tweak these, but read the online documentation!
 #define SATELLITE_AOS_LOS_CALC_RESOLUTION_HIGH_TRIGGER_SECS 300     //next event is < 5 minutes
 #define SATELLITE_AOS_LOS_CALC_RESOLUTION_MEDIUM_TRIGGER_SECS 3600 //next < 1 hour
 #define SATELLITE_AOS_ELEVATION_MIN 0.0
+
+/* ---------------- SQ6EMM settings (2026-10) ---------------- */
+#define AZ_PULSE_DEBOUNCE_US 8000          // ignore edges closer than this to the previous accepted edge (reed contact bounce)
+#define AZ_PULSE_QUIET_MS 300              // never energize the motor in the opposite direction while pulses still arrive (coasting)
+#define AZ_PULSE_LIMIT_MARGIN 15.0         // keep counting this many degrees beyond start / start+capability (no lost pulses at the limits)
+#define AZ_SOFT_LIMIT_ANTICIPATION 5.0     // manual rotation: start the soft stop this many degrees before AZ_MANUAL_ROTATE_*_LIMIT
+#define AZ_EEPROM_SAVE_AFTER_STOP_MS 1000  // save the position this long after the motor is idle and the last pulse arrived

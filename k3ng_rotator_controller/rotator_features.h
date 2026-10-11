@@ -130,7 +130,7 @@
 // #define OPTION_JOYSTICK_REVERSE_X_AXIS
 // #define OPTION_JOYSTICK_REVERSE_Y_AXIS
 #define OPTION_EL_SPEED_FOLLOWS_AZ_SPEED    // changing the azimith speed with Yaesu X commands or an azimuth speed pot will also change elevation speed
-#define OPTION_PULSE_IGNORE_AMBIGUOUS_PULSES // for azimuth and elevation position pulse input feature, ignore pulses that arrive when no rotation is active
+// #define OPTION_PULSE_IGNORE_AMBIGUOUS_PULSES // SQ6EMM: disabled - the slew drive cannot be back-driven, so pulses while the motor is off are real coasting (counted in the last direction)
 // #define OPTION_BUTTON_RELEASE_NO_SLOWDOWN  // disables slowdown when CW or CCW button is released, or stop button is depressed
 // #define OPTION_SYNC_RTC_TO_GPS // if both realtime clock and GPS are present, synchronize realtime clock to GPS
 
@@ -177,3 +177,9 @@
 // #define OPTION_MORE_SERIAL_CHECKS
 // #define OPTION_STEPPER_MOTOR_USE_TIMER_ONE_INSTEAD_OF_FIVE
 // #define OPTION_ALLOW_ROTATIONAL_AND_CONFIGURATION_CMDS_AT_BOOT_UP // if disabled, rotational and configuration commands will be ignored on the serial port for the first 10 second after boot up
+
+/* ---------------- SQ6EMM modifications (2026-10) - see SQ6EMM-CHANGES.md ---------------- */
+#define OPTION_SQ6EMM_PULSE_FIXES        // pulse input: debounce, coast counting, no reversal while coasting, counting beyond limits,
+                                         // \A sets the pulse counter, atomic counter reads, EEPROM save after every stop, \?PD diagnostics
+#define OPTION_SQ6EMM_PULSE_BOTH_EDGES   // count rising and falling edges: 2 counts per pulse (0.5 deg with SPID 1 pulse/deg)
+#define OPTION_SQ6EMM_ALWAYS_SOFT        // always soft start + soft stop; only explicit STOP commands (GS-232 S/A, Easycom SA) stop immediately
