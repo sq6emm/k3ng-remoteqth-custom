@@ -1140,6 +1140,7 @@ struct config_t {
     volatile int8_t sq_enc_acc = 0;
     volatile int sq_enc_steps = 0;              // degrees waiting for check_preset_encoders()
     volatile byte sq_enc_last_ab = 3;
+    volatile int8_t sq_enc_last_dir = 0;
     volatile unsigned long sq_enc_click_t[5] = {0, 0, 0, 0, 0};
     volatile unsigned long sq_enc_transitions = 0, sq_enc_invalid = 0, sq_enc_clicks = 0;
   #endif
@@ -2446,7 +2447,13 @@ ISR(ADC_vect){
   if (ab == sq_enc_last_ab) {return;}
   int8_t d = qdec[(sq_enc_last_ab << 2) | ab];
   sq_enc_last_ab = ab;
-  if (d == 0) {sq_enc_invalid++; return;}      // two bits changed at once: skipped a state, ignore
+  if (d == 0) {                                 // both bits changed between samples: one state skipped (fast spin)
+    sq_enc_invalid++;
+    if (sq_enc_last_dir == 0) {return;}
+    d = 2 * sq_enc_last_dir;                     // count it as two steps in the direction we were going
+  } else {
+    sq_enc_last_dir = d;
+  }
   sq_enc_transitions++;
   sq_enc_acc += d;
   byte rest = (ab == 3) || ((SQ6EMM_ENC_TRANSITIONS_PER_CLICK == 2) && (ab == 0));
