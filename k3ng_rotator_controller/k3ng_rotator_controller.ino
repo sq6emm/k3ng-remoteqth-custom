@@ -1141,6 +1141,9 @@ struct config_t {
     volatile int sq_enc_steps = 0;              // degrees waiting for check_preset_encoders()
     volatile byte sq_enc_last_ab = 3;
     volatile int8_t sq_enc_last_dir = 0;
+    volatile byte sq_enc_hist[32];               // \?PE: last 32 decoded states (ring buffer)
+    volatile byte sq_enc_hist_i = 0;
+    volatile int sq_enc_adc[2] = {0, 0};         // \?PE: last raw ADC value of A6 / A2
     volatile unsigned long sq_enc_click_t[5] = {0, 0, 0, 0, 0};
     volatile unsigned long sq_enc_transitions = 0, sq_enc_invalid = 0, sq_enc_clicks = 0;
   #endif
@@ -2436,6 +2439,7 @@ ISR(ADC_vect){
   static const int8_t qdec[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};   // [(old << 2) | new]
   int v = ADC;
   byte ch = sq_enc_ch;
+  sq_enc_adc[ch] = v;
   byte lv = sq_enc_level[ch];
   if (v > SQ6EMM_ENC_HIGH) {lv = 1;} else if (v < SQ6EMM_ENC_LOW) {lv = 0;}   // hysteresis
   sq_enc_level[ch] = lv;
@@ -2445,6 +2449,7 @@ ISR(ADC_vect){
   if (ch != 1) {return;}                       // decode after both pins have a fresh sample
   byte ab = (sq_enc_level[1] << 1) | sq_enc_level[0];   // same bit order as the original: (pin2 << 1) | pin1
   if (ab == sq_enc_last_ab) {return;}
+  sq_enc_hist[sq_enc_hist_i & 31] = ab; sq_enc_hist_i++;
   int8_t d = qdec[(sq_enc_last_ab << 2) | ab];
   sq_enc_last_ab = ab;
   if (d == 0) {                                 // both bits changed between samples: one state skipped (fast spin)
@@ -15034,6 +15039,16 @@ byte process_backslash_command(byte input_buffer[], int input_buffer_index, byte
           strcat(return_string,temp_string);
         }
         #if defined(OPTION_SQ6EMM_PULSE_FIXES) && defined(FEATURE_AZ_POSITION_PULSE_INPUT)
+        #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+        if ((input_buffer[2] == 'P') && (input_buffer[3] == 'E')) {  // \?PE - SQ6EMM encoder states (oldest..newest) + raw ADC A6/A2
+          strconditionalcpy(return_string, "\\!OKPE", include_response_code);
+          char t[8]; byte n = sq_enc_hist_i;
+          for (byte j = 0; j < 32; j++) { t[0] = '0' + sq_enc_hist[(byte)(n + j) & 31]; t[1] = 0; strcat(return_string, t); }
+          strcat(return_string, " A6="); strcat(return_string, itoa(sq_enc_adc[0], t, 10));
+          strcat(return_string, " A2="); strcat(return_string, itoa(sq_enc_adc[1], t, 10));
+          strcat(return_string, " L"); strcat(return_string, itoa((sq_enc_level[1] << 1) | sq_enc_level[0], t, 10));
+        }
+        #endif
         if ((input_buffer[2] == 'P') && (input_buffer[3] == 'D')) {  // \?PD - SQ6EMM pulse diagnostics
           // a<accepted edges> r<rejected/bounce> c<coasting> h<held starts> H<avg high ms>/<min high ms> L<avg low ms>/<min low ms>
           unsigned long acc, rej, coast, hs, ls; unsigned int hn, ln, hmin, lmin;
