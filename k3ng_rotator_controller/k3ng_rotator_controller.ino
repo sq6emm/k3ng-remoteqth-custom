@@ -2678,7 +2678,11 @@ void check_preset_encoders(){
       #endif // DEBUG_PRESET_ENCODERS
       #ifdef FEATURE_AZ_PRESET_ENCODER
       if (az_state != IDLE) {
+        #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+        submit_request(AZ, REQUEST_STOP, 0, DBG_CHECK_PRESET_ENCODERS_NOT_IDLE);
+        #else
         submit_request(AZ, REQUEST_KILL, 0, DBG_CHECK_PRESET_ENCODERS_NOT_IDLE);
+        #endif
       }
       #endif // FEATURE_AZ_PRESET_ENCODER
       #if defined(FEATURE_EL_PRESET_ENCODER) && defined(FEATURE_ELEVATION_CONTROL)
@@ -2730,6 +2734,19 @@ void check_preset_encoders(){
 #ifdef OPTION_AZ_MANUAL_ROTATE_LIMITS
 void check_az_manual_rotate_limit() {
 
+  #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+  // SQ6EMM: soft stop instead of a hard kill. Manual rotation (buttons, R/L) starts ramping down
+  // AZ_SOFT_LIMIT_ANTICIPATION before the limit; any rotation already past a limit is ramped down too.
+  byte accelerating_ccw = ((az_state == SLOW_START_CCW) || (az_state == NORMAL_CCW));
+  byte accelerating_cw  = ((az_state == SLOW_START_CW)  || (az_state == NORMAL_CW));
+  byte manual = (az_request_queue_state != IN_PROGRESS_TO_TARGET);
+  if (accelerating_ccw && ((raw_azimuth <= AZ_MANUAL_ROTATE_CCW_LIMIT) || (manual && (raw_azimuth <= (AZ_MANUAL_ROTATE_CCW_LIMIT + AZ_SOFT_LIMIT_ANTICIPATION))))) {
+    submit_request(AZ, REQUEST_STOP, 0, DBG_CHECK_AZ_MANUAL_ROTATE_LIMIT_CCW);
+  }
+  if (accelerating_cw && ((raw_azimuth >= AZ_MANUAL_ROTATE_CW_LIMIT) || (manual && (raw_azimuth >= (AZ_MANUAL_ROTATE_CW_LIMIT - AZ_SOFT_LIMIT_ANTICIPATION))))) {
+    submit_request(AZ, REQUEST_STOP, 0, DBG_CHECK_AZ_MANUAL_ROTATE_LIMIT_CW);
+  }
+  #else
   if ((current_az_state() == ROTATING_CCW) && (raw_azimuth <= (AZ_MANUAL_ROTATE_CCW_LIMIT))) {
     #ifdef DEBUG_AZ_MANUAL_ROTATE_LIMITS
       debug.print("check_az_manual_rotate_limit: stopping - hit AZ_MANUAL_ROTATE_CCW_LIMIT of ");
@@ -2746,6 +2763,7 @@ void check_az_manual_rotate_limit() {
     #endif // DEBUG_AZ_MANUAL_ROTATE_LIMITS
     submit_request(AZ, REQUEST_KILL, 0, DBG_CHECK_AZ_MANUAL_ROTATE_LIMIT_CW);
   }
+  #endif // OPTION_SQ6EMM_ALWAYS_SOFT
 } /* check_az_manual_rotate_limit */
 #endif // #ifdef OPTION_AZ_MANUAL_ROTATE_LIMITS
 
@@ -6928,7 +6946,11 @@ void az_check_operation_timeout(){
   // check if the last executed rotation operation has been going on too long
 
   if (((millis() - az_last_rotate_initiation) > OPERATION_TIMEOUT) && (az_state != IDLE)) {
+    #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+    if ((az_state != TIMED_SLOW_DOWN_CW) && (az_state != TIMED_SLOW_DOWN_CCW)) {submit_request(AZ, REQUEST_STOP, 0, 78);}
+    #else
     submit_request(AZ, REQUEST_KILL, 0, 78);
+    #endif
     #ifdef DEBUG_AZ_CHECK_OPERATION_TIMEOUT
       debug.println("az_check_operation_timeout: timeout reached, aborting rotation");
     #endif // DEBUG_AZ_CHECK_OPERATION_TIMEOUT
@@ -10845,12 +10867,14 @@ void service_request_queue(){
         #endif // FEATURE_PARK
         if (az_state != IDLE) {
           if (az_slowdown_active) {
+            #ifndef OPTION_SQ6EMM_ALWAYS_SOFT   // SQ6EMM: keep ramping down; immediate stops only via explicit STOP commands (REQUEST_KILL)
             if ((az_state == TIMED_SLOW_DOWN_CW) || (az_state == TIMED_SLOW_DOWN_CCW) || (az_state == SLOW_DOWN_CW) || (az_state == SLOW_DOWN_CCW)) {  // if we're already in timed slow down and we get another stop, do a hard stop
               rotator(DEACTIVATE, CW);
               rotator(DEACTIVATE, CCW);
               az_state = IDLE;
               az_request_queue_state = NONE;
             }
+            #endif
             if ((az_state == SLOW_START_CW) || (az_state == NORMAL_CW)) {
               az_state = INITIALIZE_TIMED_SLOW_DOWN_CW;
               az_request_queue_state = IN_PROGRESS_TIMED;
@@ -16131,7 +16155,11 @@ void process_easycom_command(byte * easycom_command_buffer, int easycom_command_
     case 'S':  // SA or SE - stop azimuth, stop elevation
       switch (easycom_command_buffer[1]) {
         case 'A':
+          #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+          submit_request(AZ, REQUEST_KILL, 0, 38);   // explicit STOP command: immediate
+          #else
           submit_request(AZ, REQUEST_STOP, 0, 38);
+          #endif
           break;
         #ifdef FEATURE_ELEVATION_CONTROL
         case 'E':
@@ -16939,7 +16967,11 @@ void process_yaesu_command(byte * yaesu_command_buffer, int yaesu_command_buffer
             debug.print(F("yaesu_serial_command: A\n"));
           }
         #endif // DEBUG_PROCESS_YAESU
+        #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+        submit_request(AZ, REQUEST_KILL, 0, 23);   // explicit STOP command: immediate
+        #else
         submit_request(AZ, REQUEST_STOP, 0, 23);
+        #endif
         //strcpy(return_string,"\n");
         #ifdef FEATURE_PARK
           deactivate_park();
@@ -16952,7 +16984,11 @@ void process_yaesu_command(byte * yaesu_command_buffer, int yaesu_command_buffer
             debug.print(F("yaesu_serial_command: S\n"));
           }
         #endif // DEBUG_PROCESS_YAESU
+        #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+        submit_request(AZ, REQUEST_KILL, 0, DBG_STOP_ROTATION);   // explicit STOP command: immediate
+        #else
         stop_rotation();
+        #endif
         #ifdef FEATURE_TIMED_BUFFER
           clear_timed_buffer();
         #endif // FEATURE_TIMED_BUFFER
