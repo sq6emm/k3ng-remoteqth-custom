@@ -52,9 +52,9 @@ You can tweak these, but read the online documentation!
 
 #define SLOW_DOWN_BEFORE_TARGET_AZ 3.0  // if slow down is enabled, slowdown will be activated within this many degrees of target azimuth
 #define AZ_SLOW_DOWN_PWM_START 200         // starting PWM value for slow down (must be < 256)
-#define	AZ_SLOW_DOWN_PWM_STOP 20          // ending PWM value for slow down (must be < 256)
+#define	AZ_SLOW_DOWN_PWM_STOP 64          // ending PWM value for slow down (must be < 256)
 #define AZ_SLOW_DOWN_STEPS 200 //20       // must be < 256
-#define AZ_INITIALLY_IN_SLOW_DOWN_PWM 50  // PWM value to start at if we're starting in the slow down zone (1 - 255)
+#define AZ_INITIALLY_IN_SLOW_DOWN_PWM 100  // PWM value to start at if we're starting in the slow down zone (1 - 255)
 
 //EL
 #define EL_SLOWSTART_DEFAULT 0            // 0 = off ; 1 = on
@@ -396,3 +396,5 @@ You can tweak these, but read the online documentation!
 #define AZ_PULSE_LIMIT_MARGIN 15.0         // keep counting this many degrees beyond start / start+capability (no lost pulses at the limits)
 #define AZ_SOFT_LIMIT_ANTICIPATION 5.0     // manual rotation: start the soft stop this many degrees before AZ_MANUAL_ROTATE_*_LIMIT
 #define AZ_EEPROM_SAVE_AFTER_STOP_MS 1000  // save the position this long after the motor is idle and the last pulse arrived
+#define AZ_STALL_NO_PULSE_MS 1500          // motor driven but no pulse for this long -> stalled, switch off
+#define AZ_STALL_ARM_MS 3000               // ... but only after the rotation has been running this long (start ramp)

@@ -1132,6 +1132,7 @@ struct config_t {
     volatile unsigned int az_pulse_high_n = 0, az_pulse_low_n = 0;
     volatile unsigned int az_pulse_high_ms_min = 65535, az_pulse_low_ms_min = 65535;
     unsigned long az_start_holds = 0;
+    unsigned long az_stalls = 0;
   #endif // OPTION_SQ6EMM_PULSE_FIXES
 #endif // FEATURE_AZ_POSITION_PULSE_INPUT
 
@@ -10411,6 +10412,18 @@ void service_rotation(){
 
 
 
+  #ifdef OPTION_SQ6EMM_PULSE_FIXES
+  // stall guard: the motor is driven but no pulse arrives (PWM too low, mechanical block) -> switch off.
+  // Not during the first AZ_STALL_ARM_MS (start ramp) and not in the timed slow-down (it ends by itself).
+  if (((az_state == NORMAL_CW) || (az_state == NORMAL_CCW) || (az_state == SLOW_START_CW) || (az_state == SLOW_START_CCW) ||
+       (az_state == SLOW_DOWN_CW) || (az_state == SLOW_DOWN_CCW)) &&
+      ((millis() - az_last_rotate_initiation) > AZ_STALL_ARM_MS) &&
+      ((millis() - sq6emm_atomic_ul(&az_pulse_last_edge_ms)) > AZ_STALL_NO_PULSE_MS)) {
+    az_stalls++;
+    submit_request(AZ, REQUEST_KILL, 0, 78);   // nothing is moving, so there is nothing to ramp down
+  }
+  #endif
+
   // slow down ---------------------------------------------------------------------------------------------------------------
   if ((az_state == SLOW_DOWN_CW) || (az_state == SLOW_DOWN_CCW)) {
 
@@ -14947,6 +14960,7 @@ byte process_backslash_command(byte input_buffer[], int input_buffer_index, byte
           strcat(return_string, " r"); strcat(return_string, ultoa(rej, t, 10));
           strcat(return_string, " c"); strcat(return_string, ultoa(coast, t, 10));
           strcat(return_string, " h"); strcat(return_string, ultoa(az_start_holds, t, 10));
+          strcat(return_string, " s"); strcat(return_string, ultoa(az_stalls, t, 10));
           strcat(return_string, " H"); strcat(return_string, ultoa(hn ? hs / hn : 0UL, t, 10));
           strcat(return_string, "/"); strcat(return_string, utoa(hmin, t, 10));
           strcat(return_string, " L"); strcat(return_string, ultoa(ln ? ls / ln : 0UL, t, 10));
