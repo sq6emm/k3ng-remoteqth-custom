@@ -1137,6 +1137,8 @@ struct config_t {
   #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
     volatile byte sq_enc_level[2] = {1, 1};     // [0] = az_rotary_preset_pin1 (A6), [1] = pin2 (A2); pull-ups -> idle high
     volatile byte sq_enc_ch = 0;
+    volatile byte sq_enc_raw[2] = {1, 1};        // thresholded but not yet debounced
+    volatile byte sq_enc_stable[2] = {0, 0};
     volatile int8_t sq_enc_acc = 0;
     volatile int sq_enc_steps = 0;              // degrees waiting for check_preset_encoders()
     volatile byte sq_enc_last_ab = 3;
@@ -2440,9 +2442,14 @@ ISR(ADC_vect){
   int v = ADC;
   byte ch = sq_enc_ch;
   sq_enc_adc[ch] = v;
-  byte lv = sq_enc_level[ch];
-  if (v > SQ6EMM_ENC_HIGH) {lv = 1;} else if (v < SQ6EMM_ENC_LOW) {lv = 0;}   // hysteresis
-  sq_enc_level[ch] = lv;
+  byte raw = sq_enc_raw[ch];
+  if (v > SQ6EMM_ENC_HIGH) {raw = 1;} else if (v < SQ6EMM_ENC_LOW) {raw = 0;}   // hysteresis
+  sq_enc_raw[ch] = raw;
+  if (raw != sq_enc_level[ch]) {                 // debounce: accept a new level only after it has been stable for a while
+    if (++sq_enc_stable[ch] >= SQ6EMM_ENC_STABLE_SAMPLES) {sq_enc_level[ch] = raw; sq_enc_stable[ch] = 0;}
+  } else {
+    sq_enc_stable[ch] = 0;
+  }
   sq_enc_ch = ch ^ 1;
   ADMUX = SQ6EMM_ADC_REFS | (sq_enc_ch ? 2 : 6);
   ADCSRA |= _BV(ADSC);
@@ -2451,6 +2458,7 @@ ISR(ADC_vect){
   if (ab == sq_enc_last_ab) {return;}
   sq_enc_hist[sq_enc_hist_i & 31] = ab; sq_enc_hist_i++;
   int8_t d = qdec[(sq_enc_last_ab << 2) | ab];
+  if (SQ6EMM_ENC_REVERSE) {d = -d;}
   sq_enc_last_ab = ab;
   if (d == 0) {                                 // both bits changed between samples: one state skipped (fast spin)
     sq_enc_invalid++;

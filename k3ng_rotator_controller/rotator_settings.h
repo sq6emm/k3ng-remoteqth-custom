@@ -399,8 +399,9 @@ You can tweak these, but read the online documentation!
 #define AZ_STALL_NO_PULSE_MS 1500          // motor driven but no pulse for this long -> stalled, switch off
 #define AZ_STALL_ARM_MS 3000               // ... but only after the rotation has been running this long (start ramp)
 #define SQ6EMM_ENC_TRANSITIONS_PER_CLICK 4  // quadrature transitions per detent (4 = full cycle per click, 2 = half cycle)
-#define SQ6EMM_ENC_LOW 900                 // ADC hysteresis thresholds (0..1023, external 2.5 V reference = AREF divider).
-#define SQ6EMM_ENC_HIGH 1000               // Near the top on purpose: with the board's 10k/100n RC filter both edges then register
-                                           // after ~0.7-0.8 ms (low 100/high 300 made falling edges ~3 ms late -> swapped order)
+#define SQ6EMM_ENC_LOW 300                 // ADC hysteresis thresholds (0..1023, external 2.5 V reference = AREF divider);
+#define SQ6EMM_ENC_HIGH 700                // board filter is only 1k/100n = 0.1 ms, so edges are fast and symmetric
+#define SQ6EMM_ENC_STABLE_SAMPLES 5        // debounce: a channel level counts after 5 equal samples (~1 ms at ~4.8 kHz/channel)
+#define SQ6EMM_ENC_REVERSE 0               // 1 = swap CW/CCW
 #define SQ6EMM_ENC_FAST_MS 150             // 5 clicks within this time ...
 #define SQ6EMM_ENC_FAST_STEP 10            // ... count this many degrees per click
