@@ -15400,6 +15400,7 @@ Not implemented yet:
     }
 
 
+    #ifndef OPTION_SQ6EMM_NO_GRID_CMDS   // SQ6EMM: \?CG \?GC \?GT \?BG \?BC excluded to fit the 30 kB application area
     // \?CGxxxx or \?CGxxxxxx  - Convert grid to coordinates
     if (((input_buffer_index == 8) || (input_buffer_index == 10)) && ((input_buffer[2] == 'C') && (input_buffer[3] == 'G'))){
       strconditionalcpy(return_string,"\\!OKCG", include_response_code);
@@ -15607,6 +15608,7 @@ Not implemented yet:
         }
       }
     //#endif
+    #endif // OPTION_SQ6EMM_NO_GRID_CMDS
 
 
 

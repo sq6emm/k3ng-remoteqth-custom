@@ -185,3 +185,4 @@
 #define SQ6EMM_VERSION "sq6emm4"          // shown on the LCD splash screen (row 2: "Rotator sq6emm2")
 #define OPTION_SQ6EMM_ALWAYS_SOFT        // always soft start + soft stop; only explicit STOP commands (GS-232 S/A, Easycom SA) stop immediately
 #define OPTION_SQ6EMM_ENCODER_ADC        // preset encoder (A6/A2) sampled by ADC interrupt + quadrature decoding, 1 deg per click, no wrap
+#define OPTION_SQ6EMM_NO_GRID_CMDS       // drop \?CG \?GC \?GT \?BG \?BC (grid/bearing helpers, unused by Hamlib/GS-232) - flash space
