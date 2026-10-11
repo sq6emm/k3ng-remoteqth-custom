@@ -10429,7 +10429,13 @@ void service_rotation(){
   // normal -------------------------------------------------------------------------------------------------------------------
   // if slow down is enabled, see if we're ready to go into slowdown
   //if (((az_state == NORMAL_CW) || (az_state == SLOW_START_CW) || (az_state == NORMAL_CCW) || (az_state == SLOW_START_CCW)) &&
+  #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+  // SQ6EMM: short moves reach the target while still in the start ramp - enter the slow-down from SLOW_START too,
+  // otherwise the motor is switched off at almost full speed and coasts past the target
+  if (((az_state == NORMAL_CW) || (az_state == NORMAL_CCW) || (az_state == SLOW_START_CW) || (az_state == SLOW_START_CCW)) &&
+  #else
   if (((az_state == NORMAL_CW) || (az_state == NORMAL_CCW)) &&
+  #endif
       (az_request_queue_state == IN_PROGRESS_TO_TARGET) && az_slowdown_active && (abs((target_raw_azimuth - raw_azimuth)) <= SLOW_DOWN_BEFORE_TARGET_AZ)) {
 
     byte az_state_was = az_state;
@@ -10451,7 +10457,15 @@ void service_rotation(){
     }
 
     if ((az_state_was == SLOW_START_CW) || (az_state_was == SLOW_START_CCW)){
+      #ifdef OPTION_SQ6EMM_ALWAYS_SOFT
+      // continue from the current ramp PWM, but at least AZ_INITIALLY_IN_SLOW_DOWN_PWM (so moves that start inside
+      // the slow-down zone get going) and at most AZ_SLOW_DOWN_PWM_START (like the normal slow-down)
+      az_initial_slow_down_voltage = current_az_speed_voltage;
+      if (az_initial_slow_down_voltage < AZ_INITIALLY_IN_SLOW_DOWN_PWM) {az_initial_slow_down_voltage = AZ_INITIALLY_IN_SLOW_DOWN_PWM;}
+      if (az_initial_slow_down_voltage > AZ_SLOW_DOWN_PWM_START) {az_initial_slow_down_voltage = AZ_SLOW_DOWN_PWM_START;}
+      #else
       az_initial_slow_down_voltage = (AZ_INITIALLY_IN_SLOW_DOWN_PWM);
+      #endif
       update_az_variable_outputs(az_initial_slow_down_voltage);
       #ifdef DEBUG_SERVICE_ROTATION
       debug.print(" SLOW_START -> SLOW_DOWN az_initial_slow_down_voltage:");
