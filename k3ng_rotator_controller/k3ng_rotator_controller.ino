@@ -1121,6 +1121,17 @@ struct config_t {
 #ifdef FEATURE_AZ_POSITION_PULSE_INPUT
   volatile float az_position_pulse_input_azimuth = 0;
   volatile byte last_known_az_state = 0;
+  #ifdef OPTION_SQ6EMM_PULSE_FIXES
+    volatile unsigned long az_pulse_last_edge_us = 0;   // time of the last accepted edge (debounce)
+    volatile unsigned long az_pulse_last_edge_ms = 0;   // same in ms (coast detection, EEPROM save)
+    volatile unsigned long az_pulse_accepted = 0;       // \?PD diagnostics
+    volatile unsigned long az_pulse_rejected = 0;
+    volatile unsigned long az_pulse_coast = 0;
+    volatile unsigned long az_pulse_high_ms_sum = 0, az_pulse_low_ms_sum = 0;
+    volatile unsigned int az_pulse_high_n = 0, az_pulse_low_n = 0;
+    volatile unsigned int az_pulse_high_ms_min = 65535, az_pulse_low_ms_min = 65535;
+    unsigned long az_start_holds = 0;
+  #endif // OPTION_SQ6EMM_PULSE_FIXES
 #endif // FEATURE_AZ_POSITION_PULSE_INPUT
 
 #ifdef FEATURE_EL_POSITION_PULSE_INPUT
@@ -6394,12 +6405,17 @@ void read_settings_from_eeprom(){
 
 
     #ifdef FEATURE_AZ_POSITION_PULSE_INPUT
+      #ifdef OPTION_SQ6EMM_PULSE_FIXES
+        raw_azimuth = configuration.last_azimuth;
+        convert_raw_azimuth_to_real_azimuth();
+      #else
       raw_azimuth = int(configuration.last_azimuth);
       if (raw_azimuth >= 360) {
         azimuth = raw_azimuth - 360;
       } else {
         azimuth = raw_azimuth;
       }
+      #endif
       az_position_pulse_input_azimuth = configuration.last_azimuth;
     #endif // FEATURE_AZ_POSITION_PULSE_INPUT
 
@@ -6495,7 +6511,11 @@ void write_settings_to_eeprom(){
   unsigned int i;
   int ee = 0;
   for (i = 0; i < sizeof(configuration); i++) {
-    EEPROM.write(ee++, *p++);
+    #ifdef OPTION_SQ6EMM_PULSE_FIXES
+      EEPROM.update(ee++, *p++);   // write only changed bytes (wear)
+    #else
+      EEPROM.write(ee++, *p++);
+    #endif
   }
 
   configuration_dirty = 0;
@@ -7585,8 +7605,14 @@ void read_azimuth(byte force_read){
   //      az_position_pule_interrupt_handler_flag = 0;
   //    }
       #endif // DEBUG_POSITION_PULSE_INPUT
-      static float last_az_position_pulse_input_azimuth = az_position_pulse_input_azimuth;
-      if (az_position_pulse_input_azimuth != last_az_position_pulse_input_azimuth) {
+      #ifdef OPTION_SQ6EMM_PULSE_FIXES
+        float az_pulse_now;
+        { uint8_t sreg = SREG; cli(); az_pulse_now = az_position_pulse_input_azimuth; SREG = sreg; }  // 4-byte float written by the ISR
+      #else
+        float az_pulse_now = az_position_pulse_input_azimuth;
+      #endif
+      static float last_az_position_pulse_input_azimuth = az_pulse_now;
+      if (az_pulse_now != last_az_position_pulse_input_azimuth) {
         #ifdef DEBUG_POSITION_PULSE_INPUT
   //        if (debug_mode){
   //          control_port->print(F("read_azimuth: last_az_position_pulse_input_azimuth:"));
@@ -7597,10 +7623,14 @@ void read_azimuth(byte force_read){
   //          control_port->println(az_pulse_counter);
   //        }
         #endif // DEBUG_POSITION_PULSE_INPUT
-        configuration.last_azimuth = az_position_pulse_input_azimuth;
+        configuration.last_azimuth = az_pulse_now;
         configuration_dirty = 1;
-        last_az_position_pulse_input_azimuth = az_position_pulse_input_azimuth;
-        raw_azimuth = int(configuration.last_azimuth);
+        last_az_position_pulse_input_azimuth = az_pulse_now;
+        #ifdef OPTION_SQ6EMM_PULSE_FIXES
+          raw_azimuth = configuration.last_azimuth;   // keep half degrees
+        #else
+          raw_azimuth = int(configuration.last_azimuth);
+        #endif
         #ifdef FEATURE_AZIMUTH_CORRECTION
           raw_azimuth = correct_azimuth(raw_azimuth);
         #endif // FEATURE_AZIMUTH_CORRECTION
@@ -9443,7 +9473,11 @@ void initialize_interrupts(){
   #endif // DEBUG_LOOP
 
   #ifdef FEATURE_AZ_POSITION_PULSE_INPUT
+  #ifdef OPTION_SQ6EMM_PULSE_BOTH_EDGES
+  attachInterrupt(AZ_POSITION_PULSE_PIN_INTERRUPT, az_position_pulse_interrupt_handler, CHANGE);
+  #else
   attachInterrupt(AZ_POSITION_PULSE_PIN_INTERRUPT, az_position_pulse_interrupt_handler, FALLING);
+  #endif
   #endif // FEATURE_AZ_POSITION_PULSE_INPUT
 
   #ifdef FEATURE_EL_POSITION_PULSE_INPUT
@@ -10179,19 +10213,35 @@ void service_rotation(){
     static byte el_initial_slow_down_voltage = 0;
   #endif // FEATURE_ELEVATION_CONTROL
 
-  if (az_state == INITIALIZE_NORMAL_CW) {
+  byte sq6emm_hold = 0;
+  #ifdef OPTION_SQ6EMM_PULSE_FIXES
+    // a start in the opposite direction waits until the coasting pulses have stopped,
+    // otherwise they would be counted in the new direction
+    if ((az_state == INITIALIZE_NORMAL_CW) || (az_state == INITIALIZE_SLOW_START_CW) || (az_state == INITIALIZE_NORMAL_CCW) || (az_state == INITIALIZE_SLOW_START_CCW)) {
+      byte want = ((az_state == INITIALIZE_NORMAL_CW) || (az_state == INITIALIZE_SLOW_START_CW)) ? ROTATING_CW : ROTATING_CCW;
+      static byte hold_counted = 0;
+      if ((want != last_known_az_state) && ((millis() - sq6emm_atomic_ul(&az_pulse_last_edge_ms)) < AZ_PULSE_QUIET_MS)) {
+        sq6emm_hold = 1;
+        if (!hold_counted) {az_start_holds++; hold_counted = 1;}
+      } else {
+        hold_counted = 0;
+      }
+    }
+  #endif
+
+  if ((az_state == INITIALIZE_NORMAL_CW) && !sq6emm_hold) {
     update_az_variable_outputs(normal_az_speed_voltage);
     rotator(ACTIVATE, CW);
     az_state = NORMAL_CW;
   }
 
-  if (az_state == INITIALIZE_NORMAL_CCW) {
+  if ((az_state == INITIALIZE_NORMAL_CCW) && !sq6emm_hold) {
     update_az_variable_outputs(normal_az_speed_voltage);
     rotator(ACTIVATE, CCW);
     az_state = NORMAL_CCW;
   }
 
-  if (az_state == INITIALIZE_SLOW_START_CW) {
+  if ((az_state == INITIALIZE_SLOW_START_CW) && !sq6emm_hold) {
     update_az_variable_outputs(AZ_SLOW_START_STARTING_PWM);
     rotator(ACTIVATE, CW);
     az_slowstart_start_time = millis();
@@ -10203,7 +10253,7 @@ void service_rotation(){
     #endif // DEBUG_SERVICE_ROTATION
   }
 
-  if (az_state == INITIALIZE_SLOW_START_CCW) {
+  if ((az_state == INITIALIZE_SLOW_START_CCW) && !sq6emm_hold) {
     update_az_variable_outputs(AZ_SLOW_START_STARTING_PWM);
     rotator(ACTIVATE, CCW);
     az_slowstart_start_time = millis();
@@ -11380,6 +11430,16 @@ void check_for_dirty_configuration(){
     last_config_write_time = millis();
   }
 
+  #ifdef OPTION_SQ6EMM_PULSE_FIXES
+    // save once after every stop (motor idle, no pulses for a while): a reset or power loss (the FTDI DTR line resets
+    // the controller whenever the serial port is opened) must never bring back a stale position
+    if ((configuration_dirty) && (az_state == IDLE) && ((millis() - sq6emm_atomic_ul(&az_pulse_last_edge_ms)) > AZ_EEPROM_SAVE_AFTER_STOP_MS)
+        && ((millis() - last_config_write_time) > 1000)) {
+      write_settings_to_eeprom();
+      last_config_write_time = millis();
+    }
+  #endif
+
   #ifdef DEBUG_PROCESSES
     service_process_debug(DEBUG_PROCESSES_PROCESS_EXIT,PROCESS_CHECK_FOR_DIRTY_CONFIGURATION);
   #endif
@@ -11414,6 +11474,60 @@ byte current_el_state(){
 #endif // FEATURE_ELEVATION_CONTROL
 // --------------------------------------------------------------
 #ifdef FEATURE_AZ_POSITION_PULSE_INPUT
+#ifdef OPTION_SQ6EMM_PULSE_FIXES
+unsigned long sq6emm_atomic_ul(volatile unsigned long *p){
+  uint8_t sreg = SREG; cli(); unsigned long v = *p; SREG = sreg; return v;
+}
+void az_position_pulse_interrupt_handler(){
+
+  // SQ6EMM: single-channel pulses from the SPID motor side (before the self-locking slew drive)
+  unsigned long now_us = micros();
+  if ((now_us - az_pulse_last_edge_us) < (unsigned long)AZ_PULSE_DEBOUNCE_US) {   // reed contact bounce
+    az_pulse_rejected++;
+    return;
+  }
+  unsigned long dt_ms = (now_us - az_pulse_last_edge_us) / 1000UL;
+  az_pulse_last_edge_us = now_us;
+  az_pulse_last_edge_ms = millis();
+
+  // duty-cycle statistics (meaningful with both edges): the interval that just ended had the opposite level
+  byte level_now = (AZ_POSITION_PULSE_PIN_INTERRUPT == 0) ? (PIND & _BV(PD2)) : (PIND & _BV(PD3));
+  if (dt_ms < 5000) {
+    if (level_now) {   // rising edge: contact was closed (line low)
+      az_pulse_low_ms_sum += dt_ms; az_pulse_low_n++;
+      if (dt_ms < az_pulse_low_ms_min) {az_pulse_low_ms_min = dt_ms;}
+    } else {
+      az_pulse_high_ms_sum += dt_ms; az_pulse_high_n++;
+      if (dt_ms < az_pulse_high_ms_min) {az_pulse_high_ms_min = dt_ms;}
+    }
+  }
+  az_pulse_accepted++;
+
+  byte state = current_az_state();
+  if (state == ROTATING_CW) {
+    az_position_pulse_input_azimuth += AZ_POSITION_PULSE_DEG_PER_PULSE;
+    last_known_az_state = ROTATING_CW;
+  } else if (state == ROTATING_CCW) {
+    az_position_pulse_input_azimuth -= AZ_POSITION_PULSE_DEG_PER_PULSE;
+    last_known_az_state = ROTATING_CCW;
+  } else {
+    // motor not driven: the worm/slew drive cannot be back-driven, so this is coasting in the last direction
+    az_pulse_coast++;
+    if (last_known_az_state == ROTATING_CW) {
+      az_position_pulse_input_azimuth += AZ_POSITION_PULSE_DEG_PER_PULSE;
+    } else if (last_known_az_state == ROTATING_CCW) {
+      az_position_pulse_input_azimuth -= AZ_POSITION_PULSE_DEG_PER_PULSE;
+    }
+  }
+
+  // keep counting beyond the configured range; the range is enforced on targets / manual limits, not on the count
+  float lo = configuration.azimuth_starting_point - AZ_PULSE_LIMIT_MARGIN;
+  float hi = configuration.azimuth_starting_point + configuration.azimuth_rotation_capability + AZ_PULSE_LIMIT_MARGIN;
+  if (az_position_pulse_input_azimuth < lo) {az_position_pulse_input_azimuth = lo;}
+  if (az_position_pulse_input_azimuth > hi) {az_position_pulse_input_azimuth = hi;}
+
+} /* az_position_pulse_interrupt_handler (SQ6EMM) */
+#else // OPTION_SQ6EMM_PULSE_FIXES
 void az_position_pulse_interrupt_handler(){
 
 
@@ -11462,6 +11576,7 @@ void az_position_pulse_interrupt_handler(){
   #endif // OPTION_AZ_POSITION_PULSE_HARD_LIMIT
 
 } /* az_position_pulse_interrupt_handler */
+#endif // OPTION_SQ6EMM_PULSE_FIXES
 #endif // FEATURE_AZ_POSITION_PULSE_INPUT
 // --------------------------------------------------------------
 #ifdef FEATURE_ELEVATION_CONTROL
@@ -13827,6 +13942,9 @@ byte process_backslash_command(byte input_buffer[], int input_buffer_index, byte
         azimuth = new_azimuth;
         configuration.last_azimuth = new_azimuth;
         raw_azimuth = new_azimuth;
+        #if defined(OPTION_SQ6EMM_PULSE_FIXES) && defined(FEATURE_AZ_POSITION_PULSE_INPUT)
+          { uint8_t sreg = SREG; cli(); az_position_pulse_input_azimuth = new_azimuth; SREG = sreg; }  // else the next pulse restores the old count
+        #endif
         configuration_dirty = 1;
         strcpy_P(return_string, (const char*) F("Azimuth set to "));
         dtostrf(new_azimuth, 0, 0, temp_string);
