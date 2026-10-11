@@ -182,7 +182,8 @@
 #define OPTION_SQ6EMM_PULSE_FIXES        // pulse input: debounce, coast counting, no reversal while coasting, counting beyond limits,
                                          // \A sets the pulse counter, atomic counter reads, EEPROM save after every stop, \?PD diagnostics
 #define OPTION_SQ6EMM_PULSE_BOTH_EDGES   // count rising and falling edges: 2 counts per pulse (0.5 deg with SPID 1 pulse/deg)
-#define SQ6EMM_VERSION "ver 6"          // shown on the LCD splash screen (row 2: "Rotator sq6emm2")
+#define SQ6EMM_VERSION "ver 6p"          // shown on the LCD splash screen (row 2: "Rotator sq6emm2")
 #define OPTION_SQ6EMM_ALWAYS_SOFT        // always soft start + soft stop; only explicit STOP commands (GS-232 S/A, Easycom SA) stop immediately
 #define OPTION_SQ6EMM_ENCODER_ADC        // preset encoder (A6/A2) sampled by ADC interrupt + quadrature decoding, 1 deg per click, no wrap
 #define OPTION_SQ6EMM_NO_GRID_CMDS       // drop \?CG \?GC \?GT \?BG \?BC (grid/bearing helpers, unused by Hamlib/GS-232) - flash space
+#define OPTION_SQ6EMM_LOOP_PROFILE       // \\?PL main-loop timing diagnostics (temporary)

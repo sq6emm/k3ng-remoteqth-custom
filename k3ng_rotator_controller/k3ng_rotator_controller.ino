@@ -1507,7 +1507,24 @@ void setup() {
 
 /*-------------------------- here's where the magic happens --------------------------------*/
 
+#ifdef OPTION_SQ6EMM_LOOP_PROFILE
+// SQ6EMM: max time per main-loop section (us) and per loop pass, reported and reset by \\?PL
+unsigned long sq_prof_max[9] = {0};
+unsigned long sq_loop_max = 0, sq_loop_sum = 0, sq_loop_n = 0, sq_loop_last = 0;
+#define SQ_PROF(i, call) do { unsigned long _t = micros(); call; unsigned long _d = micros() - _t; if (_d > sq_prof_max[i]) sq_prof_max[i] = _d; } while (0)
+void sq_loop_mark() {
+  unsigned long now = micros();
+  if (sq_loop_last) { unsigned long d = now - sq_loop_last; if (d > sq_loop_max) sq_loop_max = d; sq_loop_sum += d; sq_loop_n++; }
+  sq_loop_last = now;
+}
+#else
+#define SQ_PROF(i, call) call
+#endif
+
 void loop() {
+  #ifdef OPTION_SQ6EMM_LOOP_PROFILE
+  sq_loop_mark();
+  #endif
 
   #ifdef DEBUG_LOOP
     control_port->println("loop()");
@@ -1520,18 +1537,18 @@ void loop() {
 
   service_process_debug(DEBUG_PROCESSES_SERVICE,0);
 
-  check_serial();
-  read_headings();
+  SQ_PROF(0, check_serial());
+  SQ_PROF(1, read_headings());
 
   #ifndef FEATURE_REMOTE_UNIT_SLAVE
-    service_request_queue();
-    service_rotation();
+    SQ_PROF(2, service_request_queue());
+    SQ_PROF(3, service_rotation());
     az_check_operation_timeout();
     #ifdef FEATURE_TIMED_BUFFER
       check_timed_interval();
     #endif // FEATURE_TIMED_BUFFER
     read_headings();
-    check_buttons();
+    SQ_PROF(4, check_buttons());
     check_overlap();
     check_brake_release();
     #ifdef FEATURE_ELEVATION_CONTROL
@@ -1552,7 +1569,7 @@ void loop() {
   #endif
 
   #ifdef FEATURE_LCD_DISPLAY
-    update_lcd_display();
+    SQ_PROF(5, update_lcd_display());
   #endif
 
   #if defined(FEATURE_NEXTION_DISPLAY)
@@ -1565,7 +1582,7 @@ void loop() {
 
   #ifndef FEATURE_REMOTE_UNIT_SLAVE
     #ifdef OPTION_AZ_MANUAL_ROTATE_LIMITS
-      check_az_manual_rotate_limit();
+      SQ_PROF(6, check_az_manual_rotate_limit());
     #endif
     #if defined(OPTION_EL_MANUAL_ROTATE_LIMITS) && defined(FEATURE_ELEVATION_CONTROL)
       check_el_manual_rotate_limit();
@@ -1574,7 +1591,7 @@ void loop() {
     check_az_speed_pot();
 
     #ifdef FEATURE_AZ_PRESET_ENCODER            // Rotary Encoder or Preset Selector
-      check_preset_encoders();
+      SQ_PROF(7, check_preset_encoders());
     #else
       check_az_preset_potentiometer();
     #endif // FEATURE_AZ_PRESET_ENCODER
@@ -1594,7 +1611,7 @@ void loop() {
     service_rotation();
   #endif
 
-  check_for_dirty_configuration();
+  SQ_PROF(8, check_for_dirty_configuration());
 
   #ifdef DEBUG_PROFILE_LOOP_TIME
     profile_loop_time();
@@ -15048,6 +15065,16 @@ byte process_backslash_command(byte input_buffer[], int input_buffer_index, byte
         }
         #if defined(OPTION_SQ6EMM_PULSE_FIXES) && defined(FEATURE_AZ_POSITION_PULSE_INPUT)
         #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+        #ifdef OPTION_SQ6EMM_LOOP_PROFILE
+        if ((input_buffer[2] == 'P') && (input_buffer[3] == 'L')) {  // \?PL - loop profile: Mmax/avg us per pass, then max us per section
+          strconditionalcpy(return_string, "\\!OKPL", include_response_code);
+          char t[12];
+          strcat(return_string, "M"); strcat(return_string, ultoa(sq_loop_max, t, 10));
+          strcat(return_string, "/"); strcat(return_string, ultoa(sq_loop_n ? sq_loop_sum / sq_loop_n : 0, t, 10));
+          for (byte j = 0; j < 9; j++) { strcat(return_string, " "); strcat(return_string, ultoa(sq_prof_max[j], t, 10)); sq_prof_max[j] = 0; }
+          sq_loop_max = 0; sq_loop_sum = 0; sq_loop_n = 0;
+        }
+        #endif
         if ((input_buffer[2] == 'P') && (input_buffer[3] == 'E')) {  // \?PE - SQ6EMM encoder states (oldest..newest) + raw ADC A6/A2
           strconditionalcpy(return_string, "\\!OKPE", include_response_code);
           char t[8]; byte n = sq_enc_hist_i;
