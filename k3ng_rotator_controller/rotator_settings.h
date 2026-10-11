@@ -398,3 +398,8 @@ You can tweak these, but read the online documentation!
 #define AZ_EEPROM_SAVE_AFTER_STOP_MS 1000  // save the position this long after the motor is idle and the last pulse arrived
 #define AZ_STALL_NO_PULSE_MS 1500          // motor driven but no pulse for this long -> stalled, switch off
 #define AZ_STALL_ARM_MS 3000               // ... but only after the rotation has been running this long (start ramp)
+#define SQ6EMM_ENC_TRANSITIONS_PER_CLICK 4  // quadrature transitions per detent (4 = full cycle per click, 2 = half cycle)
+#define SQ6EMM_ENC_LOW 100                 // ADC hysteresis thresholds (0..1023, external 2.5 V reference)
+#define SQ6EMM_ENC_HIGH 300
+#define SQ6EMM_ENC_FAST_MS 150             // 5 clicks within this time ...
+#define SQ6EMM_ENC_FAST_STEP 10            // ... count this many degrees per click

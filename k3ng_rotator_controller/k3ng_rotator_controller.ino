@@ -1133,7 +1133,16 @@ struct config_t {
     volatile unsigned int az_pulse_high_ms_min = 65535, az_pulse_low_ms_min = 65535;
     unsigned long az_start_holds = 0;
     unsigned long az_stalls = 0;
-  #endif // OPTION_SQ6EMM_PULSE_FIXES
+  #endif // OPTION_SQ6EMM_PULSE_FIXES (globals)
+  #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+    volatile byte sq_enc_level[2] = {1, 1};     // [0] = az_rotary_preset_pin1 (A6), [1] = pin2 (A2); pull-ups -> idle high
+    volatile byte sq_enc_ch = 0;
+    volatile int8_t sq_enc_acc = 0;
+    volatile int sq_enc_steps = 0;              // degrees waiting for check_preset_encoders()
+    volatile byte sq_enc_last_ab = 3;
+    volatile unsigned long sq_enc_click_t[5] = {0, 0, 0, 0, 0};
+    volatile unsigned long sq_enc_transitions = 0, sq_enc_invalid = 0, sq_enc_clicks = 0;
+  #endif
 #endif // FEATURE_AZ_POSITION_PULSE_INPUT
 
 #ifdef FEATURE_EL_POSITION_PULSE_INPUT
@@ -2409,6 +2418,53 @@ void initialize_rotary_encoders(){
 
 // --------------------------------------------------------------
 #ifdef FEATURE_AZ_PRESET_ENCODER
+#if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+// SQ6EMM: A6 is analog-only on the ATmega328, so the preset encoder is sampled by the ADC in the background
+// (A6/A2 alternately, ~4.8 kHz each) and decoded here - no transitions are missed while the main loop is busy.
+#ifdef OPTION_EXTERNAL_ANALOG_REFERENCE
+  #define SQ6EMM_ADC_REFS 0x00          // AREF pin (RemoteQTH board: divider on AREF) - never select an internal reference here
+#else
+  #define SQ6EMM_ADC_REFS _BV(REFS0)    // AVcc
+#endif
+void sq6emm_encoder_adc_start(){
+  ADMUX = SQ6EMM_ADC_REFS | 6;                                             // start with A6
+  ADCSRA = _BV(ADEN) | _BV(ADIE) | _BV(ADPS2) | _BV(ADPS1) | _BV(ADPS0);  // 125 kHz ADC clock, interrupt on completion
+  ADCSRA |= _BV(ADSC);
+}
+ISR(ADC_vect){
+  static const int8_t qdec[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};   // [(old << 2) | new]
+  int v = ADC;
+  byte ch = sq_enc_ch;
+  byte lv = sq_enc_level[ch];
+  if (v > SQ6EMM_ENC_HIGH) {lv = 1;} else if (v < SQ6EMM_ENC_LOW) {lv = 0;}   // hysteresis
+  sq_enc_level[ch] = lv;
+  sq_enc_ch = ch ^ 1;
+  ADMUX = SQ6EMM_ADC_REFS | (sq_enc_ch ? 2 : 6);
+  ADCSRA |= _BV(ADSC);
+  if (ch != 1) {return;}                       // decode after both pins have a fresh sample
+  byte ab = (sq_enc_level[1] << 1) | sq_enc_level[0];   // same bit order as the original: (pin2 << 1) | pin1
+  if (ab == sq_enc_last_ab) {return;}
+  int8_t d = qdec[(sq_enc_last_ab << 2) | ab];
+  sq_enc_last_ab = ab;
+  if (d == 0) {sq_enc_invalid++; return;}      // two bits changed at once: skipped a state, ignore
+  sq_enc_transitions++;
+  sq_enc_acc += d;
+  byte rest = (ab == 3) || ((SQ6EMM_ENC_TRANSITIONS_PER_CLICK == 2) && (ab == 0));
+  if (!rest) {return;}
+  int8_t click = 0;
+  if (sq_enc_acc >= (SQ6EMM_ENC_TRANSITIONS_PER_CLICK / 2)) {click = 1;}
+  else if (sq_enc_acc <= -(SQ6EMM_ENC_TRANSITIONS_PER_CLICK / 2)) {click = -1;}
+  sq_enc_acc = 0;
+  if (!click) {return;}
+  unsigned long now = millis();
+  for (byte i = 0; i < 4; i++) {sq_enc_click_t[i] = sq_enc_click_t[i + 1];}
+  sq_enc_click_t[4] = now;
+  byte fast = ((now - sq_enc_click_t[0]) < SQ6EMM_ENC_FAST_MS);
+  sq_enc_clicks++;
+  sq_enc_steps += click * (fast ? SQ6EMM_ENC_FAST_STEP : 1);
+}
+#endif // OPTION_SQ6EMM_ENCODER_ADC
+
 void check_preset_encoders(){
 
   static unsigned long last_encoder_change_time = 0;
@@ -2428,8 +2484,14 @@ void check_preset_encoders(){
   #endif // FEATURE_EL_PRESET_ENCODER
 
   #ifdef FEATURE_AZ_PRESET_ENCODER
+  #ifdef OPTION_SQ6EMM_ENCODER_ADC
+    int sq_steps;
+    { uint8_t sreg = SREG; cli(); sq_steps = sq_enc_steps; sq_enc_steps = 0; SREG = sreg; }
+    unsigned char az_encoder_result = (sq_steps > 0) ? DIR_CW : ((sq_steps < 0) ? DIR_CCW : 0);
+  #else
   az_encoder_state = ttable[az_encoder_state & 0xf][((digitalReadEnhanced(az_rotary_preset_pin2) << 1) | digitalReadEnhanced(az_rotary_preset_pin1))];
   unsigned char az_encoder_result = az_encoder_state & 0x30;
+  #endif
   #ifdef DEBUG_PRESET_ENCODERS
   static byte last_az_rotary_preset_pin1 = 0;
   static byte last_az_rotary_preset_pin2 = 0;
@@ -2493,6 +2555,15 @@ void check_preset_encoders(){
     // bbbbbb
 
     #ifndef OPTION_PRESET_ENCODER_0_360_DEGREES
+    #ifdef OPTION_SQ6EMM_ENCODER_ADC
+    az_encoder_raw_degrees += sq_steps;          // 1 deg per click (10 when turned fast); stop at the ends, no wrap-around
+    if (az_encoder_raw_degrees > (configuration.azimuth_starting_point + configuration.azimuth_rotation_capability)) {
+      az_encoder_raw_degrees = configuration.azimuth_starting_point + configuration.azimuth_rotation_capability;
+    }
+    if (az_encoder_raw_degrees < configuration.azimuth_starting_point) {
+      az_encoder_raw_degrees = configuration.azimuth_starting_point;
+    }
+    #else
     if (az_encoder_result == DIR_CW) {
       #ifdef DEBUG_PRESET_ENCODERS
       debug.print("check_preset_encoders: az CW");
@@ -2520,6 +2591,7 @@ void check_preset_encoders(){
                                   /*- (az_encoder_raw_degrees-(azimuth_starting_point))*/);
       }
     }
+    #endif // OPTION_SQ6EMM_ENCODER_ADC
     #else //ndef OPTION_PRESET_ENCODER_0_360_DEGREES
     if (az_encoder_result == DIR_CW) {
       #ifdef DEBUG_PRESET_ENCODERS
@@ -9497,6 +9569,9 @@ void initialize_interrupts(){
   #endif // DEBUG_LOOP
 
   #ifdef FEATURE_AZ_POSITION_PULSE_INPUT
+  #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+  sq6emm_encoder_adc_start();
+  #endif
   #ifdef OPTION_SQ6EMM_PULSE_BOTH_EDGES
   az_pulse_last_level = ((AZ_POSITION_PULSE_PIN_INTERRUPT == 0) ? (PIND & _BV(PD2)) : (PIND & _BV(PD3))) ? 1 : 0;
   attachInterrupt(AZ_POSITION_PULSE_PIN_INTERRUPT, az_position_pulse_interrupt_handler, CHANGE);
@@ -12870,6 +12945,10 @@ void digitalWriteEnhanced(uint8_t pin, uint8_t writevalue){
 
 int digitalReadEnhanced(uint8_t pin){
 
+   #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+   if (pin == A6) {return sq_enc_level[0];}   // sampled by the ADC interrupt
+   if (pin == A2) {return sq_enc_level[1];}
+   #endif
    // modify for RemoteQTH rev 4
    if(pin == A6 || pin == A2){    // if(pin >= A0){
     if(analogRead(pin)>150){
@@ -14961,6 +15040,12 @@ byte process_backslash_command(byte input_buffer[], int input_buffer_index, byte
           strcat(return_string, " c"); strcat(return_string, ultoa(coast, t, 10));
           strcat(return_string, " h"); strcat(return_string, ultoa(az_start_holds, t, 10));
           strcat(return_string, " s"); strcat(return_string, ultoa(az_stalls, t, 10));
+          #if defined(OPTION_SQ6EMM_ENCODER_ADC) && defined(FEATURE_AZ_PRESET_ENCODER)
+          { unsigned long et, ei, ek; uint8_t sreg = SREG; cli(); et = sq_enc_transitions; ei = sq_enc_invalid; ek = sq_enc_clicks; SREG = sreg;
+            strcat(return_string, " e"); strcat(return_string, ultoa(et, t, 10));
+            strcat(return_string, " i"); strcat(return_string, ultoa(ei, t, 10));
+            strcat(return_string, " k"); strcat(return_string, ultoa(ek, t, 10)); }
+          #endif
           strcat(return_string, " H"); strcat(return_string, ultoa(hn ? hs / hn : 0UL, t, 10));
           strcat(return_string, "/"); strcat(return_string, utoa(hmin, t, 10));
           strcat(return_string, " L"); strcat(return_string, ultoa(ln ? ls / ln : 0UL, t, 10));
